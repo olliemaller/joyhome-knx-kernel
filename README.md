@@ -13,6 +13,7 @@ JoyHome's carrier board has an **external hardware watchdog** on GPIO4_C3. It re
 | Path | What it is |
 |---|---|
 | `dts/rk3566-joyhome-knx.dts` | Device tree for the box: Orange Pi's CM4 v1.4 tree plus JoyHome's additions (watchdog, three front buttons, second fan, fan table) and the settings JoyHome's overlays turned on (KNX on ttyS3, Zigbee on ttyS7, I2C2 for the OLED and DS1307 RTC, I2C4, PWM11). Ethernet keeps the name `end1`. Checked pin by pin against the running 5.10 system. |
+| `dts/rk3566-joyhome-knx-npu.dts` | The same plus the NPU and its IOMMU, for the experimental NPU support. Only booted when `/boot/npu.txt` exists. |
 | `dts/rk3566-orangepi-cm4-v1.4-opi66.dtsi` | Orange Pi's CM4 v1.4 board file (from their 6.6 branch), which matches this board: VCCIO5 at 1.8 V, Ethernet PHY reset on GPIO4_C4. |
 | `config/base-armbian-rockchip64-6.18.config` | Armbian's rockchip64 6.18 kernel config, the starting point. |
 | `config/joyhome.config` | The changes on top: watchdog built in, DS1307 RTC, 10 serial ports, no debug info. |
@@ -29,6 +30,7 @@ JoyHome's carrier board has an **external hardware watchdog** on GPIO4_C3. It re
 | `/etc/initramfs/post-update.d/99-uboot` | `99-uboot` | Makes `/boot/uInitrd` for the new kernel; a 5.10 rebuild goes to `/boot/k510/uInitrd`. |
 | `/usr/local/sbin/kernel-trial-confirm` + `.service` | same | On a trial boot, waits for Ethernet, `/dev/knx`, Docker and the RTC, then confirms the kernel or reboots back to 5.10. |
 | `/usr/local/sbin/joyhome-kernel-update` | same | Installs the latest release from this repo. |
+| `/usr/local/sbin/joyhome-npu` | same | Experimental NPU support (see below). |
 | `/etc/initramfs-tools/scripts/init-{premount,bottom}/k618diag` | `k618diag-*` | During a trial only, saves the kernel log to `/boot` (for diagnosis). |
 | `/etc/systemd/system/ap6256-bluetooth.service.d/only-on-5.10.conf` | `ap6256-only-on-5.10.conf` | 6.18 drives the Bluetooth itself; JoyHome's script only runs on 5.10. |
 
@@ -78,6 +80,22 @@ echo x | sudo tee /boot/kold.txt && sudo reboot
 ```
 
 Delete `/boot/kold.txt` and create `/boot/karmed.txt` to try the new kernel again.
+
+## NPU (experimental)
+
+The RK3566 has a small NPU (the same as the RK3568's). Mainline Linux doesn't support it yet: the open "rocket" driver covers the RK3588, and RK3568 support is still in review. [iav/rk3568-npu](https://github.com/iav/rk3568-npu) has it working on an ODROID-M1 (RK3568) with a fork of the rocket driver and a Mesa Teflon branch: MobileNet v1 in about 5 ms instead of 117 ms on the CPU, YOLOv8n in about 15 ms.
+
+Each release includes `joyhome-npu-<kernel>.tar.gz` with that driver built for the release's kernel and Mesa's Teflon TensorFlow Lite delegate, from pinned revisions (see `NPU-PINS` inside).
+
+```bash
+sudo joyhome-npu enable    # driver, Teflon, a Python TFLite runtime and a test model
+sudo reboot                # boots the NPU device tree (cma=256M); a trial, like a kernel update
+sudo joyhome-npu status
+sudo joyhome-npu test      # MobileNet v1, CPU vs NPU
+sudo joyhome-npu disable   # back to the normal device tree from the next reboot
+```
+
+The NPU boot is a trial: `npupending.txt` is written before booting the NPU device tree and deleted by `kernel-trial-confirm` once the box is healthy. If a boot finds it still there, u-boot writes `npuoff.txt` and boots without the NPU. 256 MB of RAM is set aside for the NPU while it's enabled. Only quantised TensorFlow Lite image models (classifiers and detectors) run on it.
 
 ## Building by hand
 

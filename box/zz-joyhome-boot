@@ -22,6 +22,14 @@ else
 fi
 mv -f /boot/Image.new /boot/Image
 cp "$dtb" /boot/joyhome/rk3566-joyhome-knx.dtb.new && mv -f /boot/joyhome/rk3566-joyhome-knx.dtb.new /boot/joyhome/rk3566-joyhome-knx.dtb
+npudtb="/usr/lib/linux-image-$ver/rockchip/rk3566-joyhome-knx-npu.dtb"
+if [ -f "$npudtb" ]; then
+	cp "$npudtb" /boot/joyhome/rk3566-joyhome-knx-npu.dtb.new && mv -f /boot/joyhome/rk3566-joyhome-knx-npu.dtb.new /boot/joyhome/rk3566-joyhome-knx-npu.dtb
+fi
+# the NPU module is built per kernel version: fetch the one for this kernel
+if [ -e /boot/npu.txt ] && [ -x /usr/local/sbin/joyhome-npu ]; then
+	/usr/local/sbin/joyhome-npu module "$ver" || echo "zz-joyhome-boot: couldn't fetch the NPU module for $ver (the NPU won't work until it is installed)" >&2
+fi
 echo "$ver" > /boot/joyhome/kernel-version
 # /boot is a small FAT partition: /boot/Image is the copy u-boot uses
 rm -f "/boot/vmlinuz-$ver"

@@ -1,0 +1,115 @@
+#!/bin/bash
+# /usr/local/sbin/joyhome-npu - EXPERIMENTAL NPU support for the JoyHome KNX box
+#
+#   joyhome-npu enable     install the driver, Teflon and a test model; boot
+#                          with the NPU device tree from the next reboot
+#   joyhome-npu disable    stop using the NPU device tree (next reboot)
+#   joyhome-npu status     what's installed and whether the NPU is up
+#   joyhome-npu test       MobileNet v1 on the CPU and on the NPU, side by side
+#   joyhome-npu module VER install the NPU driver built for kernel VER
+#                          (called by zz-joyhome-boot when a kernel installs)
+#
+# The NPU boot is a trial like a kernel update: if the box doesn't come up
+# healthy with the NPU device tree, the next boot goes back to the normal one
+# and writes /boot/npuoff.txt. Run "joyhome-npu enable" again to retry.
+#
+# Open stack: the "rocket" accel driver with RK3568 support and Mesa's Teflon
+# TensorFlow Lite delegate, from github.com/iav/rk3568-npu and the matching
+# github.com/iav/mesa branch (see the release's NPU-PINS file).
+set -euo pipefail
+REPO="olliemaller/joyhome-knx-kernel"
+LIB=/usr/local/lib/joyhome-npu
+VENV=/opt/joyhome-npu
+B=/boot
+
+need_root() { [ "$(id -u)" = 0 ] || { echo "run as root (sudo $0 $*)"; exit 1; }; }
+kver_installed() { cat $B/joyhome/kernel-version 2>/dev/null || uname -r; }
+
+fetch_bundle() {   # $1 = kernel version (e.g. 6.18.64-joyhome) -> extracts into $2
+	local kver=$1 dir=$2 tag rel url sums name
+	tag="v${kver%-joyhome}-joyhome"
+	rel=$(curl -fsSL --max-time 30 "https://api.github.com/repos/$REPO/releases/tags/$tag") \
+		|| { echo "no release $tag on github.com/$REPO"; return 1; }
+	name="joyhome-npu-$kver.tar.gz"
+	url=$(echo "$rel" | python3 -c "import json,sys; print(next(a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if a['name']=='$name'))") \
+		|| { echo "release $tag has no $name"; return 1; }
+	sums=$(echo "$rel" | python3 -c "import json,sys; print(next(a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if a['name']=='SHA256SUMS'))")
+	curl -fsSL --max-time 300 -o "$dir/$name" "$url"
+	curl -fsSL --max-time 30 -o "$dir/SHA256SUMS" "$sums"
+	( cd "$dir" && grep " $name\$" SHA256SUMS | sha256sum -c - )
+	tar xzf "$dir/$name" -C "$dir"
+}
+
+cmd_module() {
+	need_root
+	local kver=${1:-$(kver_installed)} tmp
+	tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+	fetch_bundle "$kver" "$tmp"
+	modinfo -F vermagic "$tmp/rocket.ko" | grep -q "^$kver " \
+		|| { echo "rocket.ko in the bundle isn't built for $kver"; return 1; }
+	install -D -m 644 "$tmp/rocket.ko" "/lib/modules/$kver/extra/rocket.ko"
+	depmod -a "$kver"
+	install -D -m 644 "$tmp/libteflon.so" "$LIB/libteflon.so"
+	install -D -m 644 "$tmp/mob.py" "$LIB/mob.py"
+	install -D -m 644 "$tmp/NPU-PINS" "$LIB/NPU-PINS"
+	echo "NPU driver installed for $kver"
+}
+
+cmd_enable() {
+	need_root
+	cmd_module "$(kver_installed)"
+	if [ ! -x "$VENV/bin/python" ]; then
+		echo "Setting up Python (TensorFlow Lite runtime + numpy) in $VENV ..."
+		apt-get install -y -q python3-venv >/dev/null
+		python3 -m venv "$VENV"
+		"$VENV/bin/pip" install -q --upgrade pip
+		"$VENV/bin/pip" install -q ai-edge-litert numpy
+	fi
+	if [ ! -f "$LIB/mobilenet_v1_1.0_224_quant.tflite" ]; then
+		echo "Downloading the MobileNet v1 test model ..."
+		curl -fsSL --max-time 120 https://storage.googleapis.com/download.tensorflow.org/models/mobilenet_v1_2018_08_02/mobilenet_v1_1.0_224_quant.tgz \
+			| tar xz -C "$LIB" ./mobilenet_v1_1.0_224_quant.tflite
+	fi
+	[ -f $B/joyhome/rk3566-joyhome-knx-npu.dtb ] || { echo "No NPU device tree in /boot/joyhome: update the kernel first (joyhome-kernel-update)"; exit 1; }
+	rm -f $B/npuoff.txt $B/npupending.txt
+	echo on > $B/npu.txt
+	sync
+	echo
+	echo "NPU enabled. Reboot to boot with it; the first NPU boot is a trial."
+	echo "After the reboot: sudo joyhome-npu status, then sudo joyhome-npu test"
+}
+
+cmd_disable() {
+	need_root
+	rm -f $B/npu.txt $B/npupending.txt $B/npuoff.txt
+	sync
+	echo "NPU disabled. Reboot to boot without the NPU device tree."
+}
+
+cmd_status() {
+	echo "Kernel:         $(uname -r)"
+	echo "Device tree:    $(tr -d '\0' < /proc/device-tree/model)"
+	echo -n "Boot flags:     "; ls $B/npu.txt $B/npupending.txt $B/npuoff.txt 2>/dev/null | tr '\n' ' '; echo
+	echo "Driver:         $(lsmod | grep -q '^rocket ' && echo loaded || echo 'not loaded') ($(ls /lib/modules/$(uname -r)/extra/rocket.ko 2>/dev/null || echo 'not installed for this kernel'))"
+	echo "Device:         $(ls /dev/accel/accel0 2>/dev/null || echo 'no /dev/accel/accel0')"
+	echo "Teflon:         $(ls $LIB/libteflon.so 2>/dev/null || echo 'not installed')"
+	echo "CMA:            $(grep -E 'CmaTotal' /proc/meminfo | awk '{print $2/1024 " MB"}')"
+	[ -f $LIB/NPU-PINS ] && sed 's/^/                /' $LIB/NPU-PINS
+	dmesg | grep -iE "rocket|rknn|fde4b000|npu" | tail -8 || true
+}
+
+cmd_test() {
+	[ -e /dev/accel/accel0 ] || { echo "No /dev/accel/accel0: is the NPU enabled and the box rebooted? (joyhome-npu status)"; exit 1; }
+	cd "$LIB"
+	TEFLON_PATH="$LIB/libteflon.so" MOBILENET="$LIB/mobilenet_v1_1.0_224_quant.tflite" \
+		"$VENV/bin/python" "$LIB/mob.py"
+}
+
+case "${1:-}" in
+	enable) cmd_enable ;;
+	disable) cmd_disable ;;
+	status) cmd_status ;;
+	test) cmd_test ;;
+	module) shift; cmd_module "$@" ;;
+	*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

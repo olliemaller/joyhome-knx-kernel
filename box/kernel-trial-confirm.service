@@ -1,8 +1,9 @@
 [Unit]
-Description=Confirm a 6.18 kernel trial boot (or fall back to 5.10)
+Description=Confirm a kernel or NPU trial boot (or fall back)
 After=network-online.target docker.service knxd.service
 Wants=network-online.target
-ConditionPathExists=/boot/ktrial.txt
+ConditionPathExists=|/boot/ktrial.txt
+ConditionPathExists=|/boot/npupending.txt
 
 [Service]
 Type=oneshot

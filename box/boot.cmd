@@ -17,6 +17,8 @@
 #   knew.txt    6.18 confirmed: boot 6.18.
 #   kold.txt    boot 5.10 whatever else is there. Written when a boot finds
 #               ktrial.txt still there (the previous 6.18 boot never confirmed).
+#   npu.txt / npupending.txt / npuoff.txt: experimental NPU device tree, with
+#               the same trial-and-fallback idea (see below and joyhome-npu).
 #
 # Recompile with:
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
@@ -127,10 +129,28 @@ if test "${kold}" = "true"; then
 else
 	# ---- JoyHome 6.18 kernel with its own device tree (overlays are built in) ----
 	setenv bootargs "${bootargs} panic=10"
+	setenv dtbfile "joyhome/rk3566-joyhome-knx.dtb"
+	# Experimental NPU (joyhome-npu enable): npu.txt asks for the NPU device
+	# tree. Each NPU boot writes npupending.txt first; kernel-trial-confirm
+	# deletes it once the box is healthy. If a boot finds it still there, the
+	# last NPU boot failed: write npuoff.txt and boot without the NPU.
+	if test -e ${devtype} ${devnum} ${prefix}npu.txt; then
+		if test -e ${devtype} ${devnum} ${prefix}npuoff.txt; then
+			echo "NPU switched off after a failed NPU boot (npuoff.txt)"
+		elif test -e ${devtype} ${devnum} ${prefix}npupending.txt; then
+			echo "Last NPU boot never confirmed: booting without the NPU"
+			fatwrite ${devtype} ${devnum}:1 ${load_addr} npuoff.txt 1
+		elif test -e ${devtype} ${devnum} ${prefix}joyhome/rk3566-joyhome-knx-npu.dtb; then
+			echo "Booting with the NPU device tree"
+			fatwrite ${devtype} ${devnum}:1 ${load_addr} npupending.txt 1
+			setenv dtbfile "joyhome/rk3566-joyhome-knx-npu.dtb"
+			setenv bootargs "${bootargs} cma=256M"
+		fi
+	fi
 	load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 	load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
 
-	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}joyhome/rk3566-joyhome-knx.dtb
+	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}${dtbfile}
 	fdt addr ${fdt_addr_r}
 	fdt resize 65536
 fi

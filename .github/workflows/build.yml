@@ -1,9 +1,15 @@
 name: Build kernel
 
 # Builds the latest Linux 6.18 LTS release for the JoyHome KNX Home Server and
-# publishes the Debian packages as a GitHub release. Runs on the 3rd of each
+# publishes the Debian package as a GitHub release. Runs on the 3rd of each
 # month, on changes to the config or device tree, or by hand (optionally with a
-# specific version, e.g. 6.18.63).
+# specific version, e.g. 6.18.64).
+#
+# Each release also carries joyhome-npu-<kernel>.tar.gz for the EXPERIMENTAL
+# NPU support (box/joyhome-npu): the "rocket" driver with RK3568 support built
+# for this kernel, and Mesa's Teflon TensorFlow Lite delegate. Both come from
+# pinned revisions of github.com/iav/rk3568-npu and github.com/iav/mesa, which
+# have to match each other.
 
 on:
   schedule:
@@ -29,15 +35,25 @@ concurrency:
   group: build
   cancel-in-progress: false
 
+env:
+  SERIES: "6.18"
+  # NPU pins: rocket driver fork (module/) and the matching Mesa branch
+  # (rk3568-test-session-20260820). Change both together.
+  NPU_REPO: https://github.com/iav/rk3568-npu
+  NPU_REF: cd7c0b0c598a6906b4456ee7c718c71feb14136b
+  MESA_REPO: https://github.com/iav/mesa
+  MESA_REF: de17c09f4b1dd412e506885b9b81975f93f229c2
+
 jobs:
-  build:
+  version:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    env:
-      SERIES: "6.18"
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      pkgver: ${{ steps.ver.outputs.pkgver }}
+      skip: ${{ steps.ver.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Pick the version
         id: ver
         env:
@@ -64,28 +80,32 @@ jobs:
             echo "Building $v as $tag"
           fi
 
+  kernel:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Install the build tools
-        if: steps.ver.outputs.skip == 'false'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q gcc-aarch64-linux-gnu flex bison bc libssl-dev \
             libelf-dev dpkg-dev debhelper fakeroot rsync kmod cpio device-tree-compiler python3
 
       - name: Get the kernel source
-        if: steps.ver.outputs.skip == 'false'
         run: |
-          git clone -q --depth 1 -b "v${{ steps.ver.outputs.version }}" https://github.com/gregkh/linux linux
+          git clone -q --depth 1 -b "v${{ needs.version.outputs.version }}" https://github.com/gregkh/linux linux
           rm -rf linux/.git
 
-      - name: Add the JoyHome device tree
-        if: steps.ver.outputs.skip == 'false'
+      - name: Add the JoyHome device trees
         run: |
           R=linux/arch/arm64/boot/dts/rockchip
-          cp dts/rk3566-joyhome-knx.dts dts/rk3566-orangepi-cm4-v1.4-opi66.dtsi "$R/"
-          echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-joyhome-knx.dtb' >> "$R/Makefile"
+          cp dts/rk3566-joyhome-knx.dts dts/rk3566-joyhome-knx-npu.dts dts/rk3566-orangepi-cm4-v1.4-opi66.dtsi "$R/"
+          echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-joyhome-knx.dtb rk3566-joyhome-knx-npu.dtb' >> "$R/Makefile"
 
       - name: Configure
-        if: steps.ver.outputs.skip == 'false'
         run: |
           cd linux
           export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
@@ -98,44 +118,122 @@ jobs:
           for o in GPIO_WATCHDOG=y GPIO_WATCHDOG_ARCH_INITCALL=y RTC_DRV_DS1307=y \
                    SECURITY_APPARMOR=y EXT4_FS=y VFAT_FS=y MMC_SDHCI_OF_DWCMSHC=y \
                    DWMAC_ROCKCHIP=y MOTORCOMM_PHY=y SERIAL_8250_DW=y OVERLAY_FS=m BRIDGE=y \
-                   BRCMFMAC=m BT_HCIUART_BCM=y SENSORS_PWM_FAN=m; do
+                   BRCMFMAC=m BT_HCIUART_BCM=y SENSORS_PWM_FAN=m \
+                   DRM_ACCEL=y DRM_SCHED=m DRM_GEM_SHMEM_HELPER=m ROCKCHIP_IOMMU=y DMA_CMA=y; do
             grep -qx "CONFIG_$o" .config || { echo "missing CONFIG_$o"; exit 1; }
           done
           echo "Kernel release: $(make -s kernelrelease)"
           grep -c '=m$' .config | xargs echo "Modules:"
 
       - name: Build
-        if: steps.ver.outputs.skip == 'false'
         run: |
           cd linux
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            KDEB_PKGVERSION="${{ steps.ver.outputs.pkgver }}" DPKG_FLAGS=-d \
+            KDEB_PKGVERSION="${{ needs.version.outputs.pkgver }}" DPKG_FLAGS=-d \
             KBUILD_BUILD_USER=olliemaller KBUILD_BUILD_HOST=joyhome-knx-kernel \
             DEBEMAIL="olliemaller@users.noreply.github.com" DEBFULLNAME="olliemaller" \
             bindeb-pkg
 
+      - name: Build the NPU driver (experimental)
+        run: |
+          git init -q npu && cd npu
+          git fetch -q --depth 1 "$NPU_REPO" "$NPU_REF" && git checkout -q FETCH_HEAD
+          make -C ../linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- M="$PWD/module" modules
+          modinfo -F vermagic module/rocket.ko
+
       - name: Check the package
-        if: steps.ver.outputs.skip == 'false'
         run: |
           deb=$(ls linux-image-*-joyhome_*.deb | grep -v dbg)
-          dpkg-deb -c "$deb" | grep -q "usr/lib/linux-image-.*/rockchip/rk3566-joyhome-knx.dtb" \
-            || { echo "device tree missing from $deb"; exit 1; }
+          for d in rk3566-joyhome-knx.dtb rk3566-joyhome-knx-npu.dtb; do
+            dpkg-deb -c "$deb" | grep -q "usr/lib/linux-image-.*/rockchip/$d" \
+              || { echo "$d missing from $deb"; exit 1; }
+          done
           dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards "./usr/lib/linux-image-*/rockchip/rk3566-joyhome-knx.dtb" > joyhome.dtb
+          dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards "./usr/lib/linux-image-*/rockchip/rk3566-joyhome-knx-npu.dtb" > joyhome-npu.dtb
           dtc -I dtb -O dts joyhome.dtb 2>/dev/null | grep -q '"linux,wdt-gpio"' || { echo "watchdog node missing"; exit 1; }
-          mkdir -p out
+          dtc -I dtb -O dts joyhome.dtb 2>/dev/null | grep -q 'rknn-core' && { echo "NPU node in the normal device tree"; exit 1; }
+          dtc -I dtb -O dts joyhome-npu.dtb 2>/dev/null | grep -q '"rockchip,rk3568-rknn-core"' || { echo "NPU node missing"; exit 1; }
+          kver=$(cd linux && make -s kernelrelease)
+          mkdir -p out npu-out
           cp "$deb" out/
-          cp linux/.config "out/config-${{ steps.ver.outputs.version }}-joyhome"
+          cp linux/.config "out/config-$kver"
+          cp npu/module/rocket.ko npu/tests/mob.py npu-out/
+          echo "$kver" > npu-out/kernel-version
+          ls -la out npu-out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: |
+            out/
+            npu-out/
+
+  teflon:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    timeout-minutes: 120
+    steps:
+      - name: Install the build tools
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends git ca-certificates build-essential \
+            meson ninja-build pkg-config python3-mako python3-yaml python3-packaging python3-ply \
+            libdrm-dev flex bison libexpat1-dev zlib1g-dev libzstd-dev file
+
+      - name: Get Mesa
+        run: |
+          git init -q mesa && cd mesa
+          git fetch -q --depth 1 "$MESA_REPO" "$MESA_REF" && git checkout -q FETCH_HEAD
+
+      - name: Build Teflon
+        run: |
+          cd mesa
+          meson setup build --buildtype=release -Dgallium-drivers=rocket -Dteflon=true \
+            -Dvulkan-drivers= -Dplatforms= -Dglx=disabled -Degl=disabled -Dgbm=disabled \
+            -Dgles1=disabled -Dgles2=disabled -Dopengl=false -Dllvm=disabled \
+            -Dvalgrind=disabled -Dlibunwind=disabled -Dzstd=enabled
+          ninja -C build src/gallium/targets/teflon/libteflon.so
+          mkdir -p ../teflon-out
+          cp build/src/gallium/targets/teflon/libteflon.so ../teflon-out/
+          file ../teflon-out/libteflon.so
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teflon
+          path: teflon-out/
+
+  release:
+    needs: [version, kernel, teflon]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+
+      - name: Assemble
+        run: |
+          kver=$(cat art/kernel/npu-out/kernel-version)
+          mkdir -p out bundle
+          cp art/kernel/out/* out/
+          cp art/kernel/npu-out/rocket.ko art/kernel/npu-out/mob.py art/teflon/libteflon.so bundle/
+          printf 'rocket driver: %s @ %s\nMesa/Teflon:   %s @ %s\nkernel:        %s\n' \
+            "$NPU_REPO" "$NPU_REF" "$MESA_REPO" "$MESA_REF" "$kver" > bundle/NPU-PINS
+          tar czf "out/joyhome-npu-$kver.tar.gz" -C bundle .
           (cd out && sha256sum * > SHA256SUMS)
           ls -la out
 
       - name: Publish the release
-        if: steps.ver.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          tag="${{ steps.ver.outputs.tag }}"
-          notes="Linux ${{ steps.ver.outputs.version }} for the JoyHome KNX Home Server (Orange Pi CM4 v1.4).
+          tag="${{ needs.version.outputs.tag }}"
+          notes="Linux ${{ needs.version.outputs.version }} for the JoyHome KNX Home Server (Orange Pi CM4 v1.4).
           Install on the box with: sudo joyhome-kernel-update
-          The first boot is a trial; the box falls back to 5.10 by itself if it isn't healthy."
+          The first boot is a trial; the box falls back to 5.10 by itself if it isn't healthy.
+
+          joyhome-npu-*.tar.gz is the EXPERIMENTAL NPU support (sudo joyhome-npu enable)."
           gh release delete "$tag" --yes --cleanup-tag >/dev/null 2>&1 || true
-          gh release create "$tag" out/* --title "Linux ${{ steps.ver.outputs.version }}" --notes "$notes"
+          gh release create "$tag" out/* --target "${{ github.sha }}" --title "Linux ${{ needs.version.outputs.version }}" --notes "$notes"

@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * JoyHome KNX Home Server with the NPU switched on (EXPERIMENTAL).
+ *
+ * Same as rk3566-joyhome-knx.dts, plus the RK3566/RK3568 NPU (RKNN core) and
+ * its IOMMU, so the out-of-tree "rocket" accel driver can use it with Mesa's
+ * Teflon TensorFlow Lite delegate. Only booted when /boot/npu.txt exists
+ * (see box/boot.cmd); the normal device tree does not touch the NPU.
+ *
+ * Nodes from github.com/iav/rk3568-npu (overlay/rk3568-npu-test.dts, RK3568
+ * on ODROID-M1), which in turn takes addresses and the IRQ from Rockchip's
+ * 6.1 BSP. The RK3566 has the same NPU as the RK3568.
+ */
+
+#include "rk3566-joyhome-knx.dts"
+
+/ {
+	model = "JoyHome KNX Home Server (Orange Pi CM4 v1.4) + NPU";
+
+	rknn_mmu: iommu@fde4b000 {
+		compatible = "rockchip,rk3568-iommu";
+		reg = <0x0 0xfde4b000 0x0 0x40>;
+		interrupts = <GIC_SPI 151 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru ACLK_NPU>, <&cru HCLK_NPU>;
+		clock-names = "aclk", "iface";
+		/* the IOMMU registers live inside the NPU power domain */
+		power-domains = <&power RK3568_PD_NPU>;
+		#iommu-cells = <0>;
+	};
+
+	rknn_core: npu@fde40000 {
+		compatible = "rockchip,rk3568-rknn-core";
+		reg = <0x0 0xfde40000 0x0 0x1000>,
+		      <0x0 0xfde41000 0x0 0x1000>,
+		      <0x0 0xfde43000 0x0 0x1000>;
+		reg-names = "pc", "cna", "core";
+		interrupts = <GIC_SPI 151 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru ACLK_NPU>, <&cru HCLK_NPU>, <&cru CLK_NPU>, <&cru PCLK_NPU_PRE>;
+		clock-names = "aclk", "hclk", "npu", "pclk";
+		assigned-clocks = <&cru CLK_NPU>;
+		assigned-clock-rates = <200000000>;
+		resets = <&cru SRST_A_NPU>, <&cru SRST_H_NPU>;
+		reset-names = "srst_a", "srst_h";
+		power-domains = <&power RK3568_PD_NPU>;
+		iommus = <&rknn_mmu>;
+		npu-supply = <&vdd_npu>;
+	};
+};
+
+/*
+ * Keep the NPU rail up from boot: the power domain can't acknowledge an idle
+ * request while its supply is off, and the rail otherwise sits at its 0.5 V
+ * floor. 850 mV is the lowest vendor NPU operating point.
+ */
+&vdd_npu {
+	regulator-min-microvolt = <850000>;
+	regulator-max-microvolt = <1000000>;
+	regulator-always-on;
+	regulator-boot-on;
+};
+
+/*
+ * rk356x-base.dtsi doesn't describe the NPU power domain (no mainline user).
+ * No pm_qos on purpose: the QoS registers sit inside the NPU rail and reading
+ * them before vdd_npu is up aborts (see the iav/rk3568-npu notes).
+ */
+&power {
+	power-domain@RK3568_PD_NPU {
+		reg = <RK3568_PD_NPU>;
+		clocks = <&cru ACLK_NPU_PRE>, <&cru HCLK_NPU_PRE>, <&cru PCLK_NPU_PRE>;
+		#power-domain-cells = <0>;
+	};
+};
