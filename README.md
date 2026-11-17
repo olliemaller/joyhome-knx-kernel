@@ -58,6 +58,19 @@ sudo joyhome-kernel-update --check    # just check
 
 The first boot of a new kernel is always a trial.
 
+### Ethernet MAC address
+
+JoyHome's 5.10 kernel gave the Ethernet port a fixed MAC address. Mainline gives it a random one each boot, so the box can turn up at a different IP after switching kernels. Pin the box's original MAC (the one your router showed on 5.10) once, in NetworkManager; it survives reboots and kernel updates and makes no difference on 5.10:
+
+```bash
+sudo nmcli con modify "Supervisor end1" ethernet.cloned-mac-address XX:XX:XX:XX:XX:XX
+sudo nmcli con up "Supervisor end1"
+```
+
+### DS1307 RTC
+
+JoyHome's `/etc/rc.local` adds the DS1307 through `/sys/class/i2c-adapter/i2c-2/new_device`, which no longer exists on newer kernels. Use `/sys/bus/i2c/devices/i2c-2/new_device` instead (works on both).
+
 ### Going back to 5.10
 
 ```bash

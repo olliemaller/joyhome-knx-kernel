@@ -15,9 +15,13 @@ img_url=$(echo "$rel" | python3 -c 'import json,sys; print(next(a["browser_downl
 sums_url=$(echo "$rel" | python3 -c 'import json,sys; print(next(a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"]=="SHA256SUMS"))')
 img=$(basename "$img_url")
 newver=$(echo "$img" | sed -E 's/^linux-image-([^_]+)_.*/\1/')
+newpkg=$(echo "$img" | sed -E 's/^linux-image-[^_]+_([^_]+)_.*/\1/')
 cur=$(cat /boot/joyhome/kernel-version 2>/dev/null || echo none)
-echo "Running: $(uname -r)   installed JoyHome kernel: $cur   latest build: $newver ($tag)"
-if [ "$newver" = "$cur" ]; then echo "Already up to date."; exit 0; fi
+curpkg=$(dpkg-query -W -f='${Version}' "linux-image-$cur" 2>/dev/null || echo none)
+echo "Running: $(uname -r)   installed JoyHome kernel: $cur ($curpkg)   latest build: $newver ($newpkg, $tag)"
+# compare the package version too, so a rebuild of the same kernel version
+# (device tree or config change) is picked up
+if [ "$newver" = "$cur" ] && [ "$newpkg" = "$curpkg" ]; then echo "Already up to date."; exit 0; fi
 [ $check = 1 ] && { echo "An update is available."; exit 10; }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

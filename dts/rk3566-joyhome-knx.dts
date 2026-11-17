@@ -12,7 +12,9 @@
  *  - what /boot/orangepiEnv.txt overlays turned on (no overlays are used
  *    with this file): uart3-m0 = KNX TP-UART (/dev/ttyS3 -> /dev/knx),
  *    uart7-m2 = Zigbee (/dev/ttyS7), i2c2-m1 = OLED + DS1307 RTC,
- *    i2c4-m0, pwm11-m1 = second fan. uart9-m2 is left off: nothing uses it.
+ *    pwm11-m1 = second fan. i2c4-m0 and uart9-m2 are left off: nothing is
+ *    connected to I2C4 (every address answers, so its lines float) and
+ *    nothing uses UART9.
  *  - Ethernet alias ethernet1, so the interface stays "end1".
  *  - JoyHome's three front buttons (gpio-keys, /dev/input/by-path/
  *    platform-buttons-event).
@@ -130,13 +132,6 @@
 &i2c2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c2m1_xfer>;
-	status = "okay";
-};
-
-/* was overlay i2c4-m0 */
-&i2c4 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2c4m0_xfer>;
 	status = "okay";
 };
 
