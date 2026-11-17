@@ -42,16 +42,19 @@ fetch_bundle() {   # $1 = kernel version (e.g. 6.18.64-joyhome) -> extracts into
 
 cmd_module() {
 	need_root
-	local kver=${1:-$(kver_installed)} tmp
-	tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
-	fetch_bundle "$kver" "$tmp"
-	modinfo -F vermagic "$tmp/rocket.ko" | grep -q "^$kver " \
-		|| { echo "rocket.ko in the bundle isn't built for $kver"; return 1; }
-	install -D -m 644 "$tmp/rocket.ko" "/lib/modules/$kver/extra/rocket.ko"
-	depmod -a "$kver"
-	install -D -m 644 "$tmp/libteflon.so" "$LIB/libteflon.so"
-	install -D -m 644 "$tmp/mob.py" "$LIB/mob.py"
-	install -D -m 644 "$tmp/NPU-PINS" "$LIB/NPU-PINS"
+	local kver=${1:-$(kver_installed)}
+	# subshell so the temporary folder is always cleaned up, success or not
+	(
+		tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+		fetch_bundle "$kver" "$tmp"
+		modinfo -F vermagic "$tmp/rocket.ko" | grep -q "^$kver " \
+			|| { echo "rocket.ko in the bundle isn't built for $kver"; exit 1; }
+		install -D -m 644 "$tmp/rocket.ko" "/lib/modules/$kver/extra/rocket.ko"
+		depmod -a "$kver"
+		install -D -m 644 "$tmp/libteflon.so" "$LIB/libteflon.so"
+		install -D -m 644 "$tmp/mob.py" "$LIB/mob.py"
+		install -D -m 644 "$tmp/NPU-PINS" "$LIB/NPU-PINS"
+	)
 	echo "NPU driver installed for $kver"
 }
 
@@ -87,6 +90,7 @@ cmd_disable() {
 }
 
 cmd_status() {
+	set +eo pipefail   # a missing file is information here, not an error
 	echo "Kernel:         $(uname -r)"
 	echo "Device tree:    $(tr -d '\0' < /proc/device-tree/model)"
 	echo -n "Boot flags:     "; ls $B/npu.txt $B/npupending.txt $B/npuoff.txt 2>/dev/null | tr '\n' ' '; echo
