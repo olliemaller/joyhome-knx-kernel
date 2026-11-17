@@ -1,0 +1,14 @@
+[Unit]
+Description=Confirm a 6.18 kernel trial boot (or fall back to 5.10)
+After=network-online.target docker.service knxd.service
+Wants=network-online.target
+ConditionPathExists=/boot/ktrial.txt
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 90
+ExecStart=/usr/local/sbin/kernel-trial-confirm
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+#!/bin/sh
+# /etc/kernel/postinst.d/zz-joyhome-boot
+# After a *-joyhome kernel package is installed (initramfs-tools has already
+# written /boot/uInitrd), copy its kernel and the JoyHome device tree to where
+# /boot/boot.scr loads them, and arm a trial boot: the next boot tries the new
+# kernel once and u-boot falls back to 5.10 if it doesn't confirm.
+set -e
+ver="$1"
+case "$ver" in *-joyhome) ;; *) exit 0 ;; esac
+dtb="/usr/lib/linux-image-$ver/rockchip/rk3566-joyhome-knx.dtb"
+if [ ! -f "/boot/vmlinuz-$ver" ] || [ ! -f "$dtb" ]; then
+	echo "zz-joyhome-boot: kernel or device tree for $ver missing, leaving the boot files alone" >&2
+	exit 0
+fi
+mkdir -p /boot/joyhome
+# u-boot on this board (Rockchip 2017.09) can't boot a compressed kernel, and
+# Debian kernel packages ship vmlinuz gzip-compressed: unpack it to a plain Image
+if gzip -t "/boot/vmlinuz-$ver" 2>/dev/null; then
+	gzip -dc "/boot/vmlinuz-$ver" > /boot/Image.new
+else
+	cp "/boot/vmlinuz-$ver" /boot/Image.new
+fi
+mv -f /boot/Image.new /boot/Image
+cp "$dtb" /boot/joyhome/rk3566-joyhome-knx.dtb.new && mv -f /boot/joyhome/rk3566-joyhome-knx.dtb.new /boot/joyhome/rk3566-joyhome-knx.dtb
+echo "$ver" > /boot/joyhome/kernel-version
+# /boot is a small FAT partition: /boot/Image is the copy u-boot uses
+rm -f "/boot/vmlinuz-$ver"
+# trial boot for the new kernel (see /boot/boot.cmd)
+rm -f /boot/ktrial.txt /boot/kold.txt
+echo "$ver" > /boot/karmed.txt
+sync
+echo "zz-joyhome-boot: $ver is ready. Reboot to try it; if it doesn't come up healthy the box falls back to 5.10 by itself."

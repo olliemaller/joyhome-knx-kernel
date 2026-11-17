@@ -1,0 +1,32 @@
+#!/bin/bash
+# Confirms a 6.18 trial boot on the JoyHome KNX box once it's healthy, or
+# reboots so u-boot falls back to 5.10 (see /boot/boot.cmd).
+# Does nothing on 5.10 or when no trial is running.
+B=/boot
+[ -e "$B/ktrial.txt" ] || exit 0
+case "$(uname -r)" in 5.10*) exit 0 ;; esac
+
+log() { logger -t kernel-trial "$*"; echo "$*"; }
+fail=""
+# give the network, Docker and Home Assistant time to start
+for i in $(seq 1 30); do
+	ip -4 addr show dev end1 2>/dev/null | grep -q "inet " && break
+	sleep 10
+done
+ip -4 addr show dev end1 2>/dev/null | grep -q "inet " || fail="$fail no-ethernet-ip"
+[ -c /dev/ttyS3 ] || fail="$fail no-ttyS3(KNX)"
+[ -e /dev/knx ] || fail="$fail no-/dev/knx"
+systemctl is-active --quiet docker || fail="$fail docker-not-running"
+[ -e /sys/class/rtc/rtc0 ] || fail="$fail no-rtc"
+
+if [ -z "$fail" ]; then
+	echo confirmed > "$B/knew.txt"
+	rm -f "$B/ktrial.txt" "$B/karmed.txt"
+	sync
+	log "6.18 trial confirmed on $(uname -r): this kernel is now the default"
+else
+	log "6.18 trial FAILED:$fail. Rebooting; u-boot will fall back to 5.10"
+	sync
+	sleep 5
+	systemctl reboot
+fi

@@ -1,0 +1,141 @@
+name: Build kernel
+
+# Builds the latest Linux 6.18 LTS release for the JoyHome KNX Home Server and
+# publishes the Debian packages as a GitHub release. Runs on the 3rd of each
+# month, on changes to the config or device tree, or by hand (optionally with a
+# specific version, e.g. 6.18.63).
+
+on:
+  schedule:
+    - cron: "37 16 3 * *" # 16:37 UTC on the 3rd of each month
+  push:
+    branches: [main]
+    paths: ["config/**", "dts/**", ".github/workflows/build.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Kernel version (blank = latest 6.18.y)"
+        required: false
+        default: ""
+      force:
+        description: "Rebuild even if a release for this version exists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      SERIES: "6.18"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ github.event.inputs.version }}"
+          if [ -z "$v" ]; then
+            v=$(git ls-remote --tags https://github.com/gregkh/linux "v${SERIES}.*" \
+                | grep -v '\^{}' | sed 's#.*refs/tags/v##' | sort -V | tail -1)
+          fi
+          [ -n "$v" ] || { echo "no ${SERIES} release found"; exit 1; }
+          rev=$(git rev-parse --short HEAD)
+          tag="v${v}-joyhome"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "pkgver=${v}-1+${rev}" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1 \
+             && [ "${{ github.event.inputs.force }}" != "true" ] \
+             && [ "${{ github.event_name }}" != "push" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release $tag already exists, nothing to do."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Building $v as $tag"
+          fi
+
+      - name: Install the build tools
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q gcc-aarch64-linux-gnu flex bison bc libssl-dev \
+            libelf-dev dpkg-dev debhelper fakeroot rsync kmod cpio device-tree-compiler python3
+
+      - name: Get the kernel source
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          git clone -q --depth 1 -b "v${{ steps.ver.outputs.version }}" https://github.com/gregkh/linux linux
+          rm -rf linux/.git
+
+      - name: Add the JoyHome device tree
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          R=linux/arch/arm64/boot/dts/rockchip
+          cp dts/rk3566-joyhome-knx.dts dts/rk3566-orangepi-cm4-v1.4-opi66.dtsi "$R/"
+          echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-joyhome-knx.dtb' >> "$R/Makefile"
+
+      - name: Configure
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          cd linux
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          cp ../config/base-armbian-rockchip64-6.18.config .config
+          scripts/kconfig/merge_config.sh -m .config ../config/joyhome.config
+          make olddefconfig
+          python3 ../config/trim-drivers.py .
+          make olddefconfig
+          # the box can't boot without these
+          for o in GPIO_WATCHDOG=y GPIO_WATCHDOG_ARCH_INITCALL=y RTC_DRV_DS1307=y \
+                   SECURITY_APPARMOR=y EXT4_FS=y VFAT_FS=y MMC_SDHCI_OF_DWCMSHC=y \
+                   DWMAC_ROCKCHIP=y MOTORCOMM_PHY=y SERIAL_8250_DW=y OVERLAY_FS=m BRIDGE=y \
+                   BRCMFMAC=m BT_HCIUART_BCM=y SENSORS_PWM_FAN=m; do
+            grep -qx "CONFIG_$o" .config || { echo "missing CONFIG_$o"; exit 1; }
+          done
+          echo "Kernel release: $(make -s kernelrelease)"
+          grep -c '=m$' .config | xargs echo "Modules:"
+
+      - name: Build
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          cd linux
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            KDEB_PKGVERSION="${{ steps.ver.outputs.pkgver }}" DPKG_FLAGS=-d \
+            KBUILD_BUILD_USER=olliemaller KBUILD_BUILD_HOST=joyhome-knx-kernel \
+            DEBEMAIL="olliemaller@users.noreply.github.com" DEBFULLNAME="olliemaller" \
+            bindeb-pkg
+
+      - name: Check the package
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          deb=$(ls linux-image-*-joyhome_*.deb | grep -v dbg)
+          dpkg-deb -c "$deb" | grep -q "usr/lib/linux-image-.*/rockchip/rk3566-joyhome-knx.dtb" \
+            || { echo "device tree missing from $deb"; exit 1; }
+          dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards "./usr/lib/linux-image-*/rockchip/rk3566-joyhome-knx.dtb" > joyhome.dtb
+          dtc -I dtb -O dts joyhome.dtb 2>/dev/null | grep -q '"linux,wdt-gpio"' || { echo "watchdog node missing"; exit 1; }
+          mkdir -p out
+          cp "$deb" out/
+          cp linux/.config "out/config-${{ steps.ver.outputs.version }}-joyhome"
+          (cd out && sha256sum * > SHA256SUMS)
+          ls -la out
+
+      - name: Publish the release
+        if: steps.ver.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          notes="Linux ${{ steps.ver.outputs.version }} for the JoyHome KNX Home Server (Orange Pi CM4 v1.4).
+          Install on the box with: sudo joyhome-kernel-update
+          The first boot is a trial; the box falls back to 5.10 by itself if it isn't healthy."
+          gh release delete "$tag" --yes --cleanup-tag >/dev/null 2>&1 || true
+          gh release create "$tag" out/* --title "Linux ${{ steps.ver.outputs.version }}" --notes "$notes"

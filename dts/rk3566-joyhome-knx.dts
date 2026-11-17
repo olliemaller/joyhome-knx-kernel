@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * JoyHome "KNX HOME SERVER": Orange Pi CM4 v1.4 on JoyHome's carrier board,
+ * for mainline Linux 6.18 LTS (joyhome-knx-kernel build).
+ *
+ * Base: Orange Pi's CM4 v1.4 device tree (orange-pi-6.6-rk35xx branch), which
+ * matches this board: VCCIO5 at 1.8 V and the Ethernet PHY reset on GPIO4_C4.
+ *
+ * Added here, to match what the box ran on 5.10:
+ *  - JoyHome's external hardware watchdog (GPIO4_C3), without which the
+ *    board resets within seconds of the kernel starting.
+ *  - what /boot/orangepiEnv.txt overlays turned on (no overlays are used
+ *    with this file): uart3-m0 = KNX TP-UART (/dev/ttyS3 -> /dev/knx),
+ *    uart7-m2 = Zigbee (/dev/ttyS7), i2c2-m1 = OLED + DS1307 RTC,
+ *    i2c4-m0, pwm11-m1 = second fan. uart9-m2 is left off: nothing uses it.
+ *  - Ethernet alias ethernet1, so the interface stays "end1".
+ *  - JoyHome's three front buttons (gpio-keys, /dev/input/by-path/
+ *    platform-buttons-event).
+ *  - the second fan, and fan steps from the CPU thermal zone at JoyHome's
+ *    temperatures (55/63/73/77 °C -> 39/59/78/100 %). Mainline pwm-fan ignores
+ *    "rockchip,temp-trips", so without these maps the fans would run flat out.
+ *
+ * The DS1307 is still added at boot by /etc/rc.local, so RTC numbering stays
+ * rk808 = rtc0, ds1307 = rtc1 as before.
+ */
+
+#include "rk3566-orangepi-cm4-v1.4-opi66.dtsi"
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "JoyHome KNX Home Server (Orange Pi CM4 v1.4)";
+
+	/delete-node/ sprd-mtty;
+
+	/*
+	 * JoyHome's 5.10 tree names the Ethernet "ethernet1", which makes systemd
+	 * call it end1; NetworkManager's "Supervisor end1" connection depends on it.
+	 */
+	aliases {
+		/delete-property/ ethernet0;
+		ethernet1 = &gmac1;
+	};
+
+	/*
+	 * Same ramoops area as JoyHome's 5.10 device tree. (On this board the
+	 * firmware doesn't keep RAM across a reset, so it rarely survives one.)
+	 */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		ramoops@110000 {
+			compatible = "ramoops";
+			reg = <0x0 0x110000 0x0 0xf0000>;
+			record-size = <0x20000>;
+			console-size = <0x80000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x50000>;
+		};
+	};
+
+	/*
+	 * JoyHome's external hardware watchdog on GPIO4_C3. It resets the whole
+	 * board unless this pin is toggled about every second from early boot,
+	 * so the kernel needs CONFIG_GPIO_WATCHDOG=y and
+	 * CONFIG_GPIO_WATCHDOG_ARCH_INITCALL=y (a module loads too late).
+	 * Same settings as JoyHome's 5.10 device tree.
+	 */
+	watchdog {
+		compatible = "linux,wdt-gpio";
+		gpios = <&gpio4 RK_PC3 GPIO_ACTIVE_LOW>;
+		hw_algo = "toggle";
+		hw_margin_ms = <1000>;
+		always-running;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&joyhome_buttons>;
+
+		button-enter {
+			label = "KEY_ENTER";
+			gpios = <&gpio3 RK_PD5 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_ENTER>;
+		};
+
+		button-down {
+			label = "KEY_DOWN";
+			gpios = <&gpio3 RK_PD2 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_DOWN>;
+		};
+
+		button-up {
+			label = "KEY_UP";
+			gpios = <&gpio3 RK_PD1 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_UP>;
+		};
+	};
+
+	fan2: pwm-fan2 {
+		compatible = "pwm-fan";
+		#cooling-cells = <2>;
+		pwms = <&pwm11 0 50000 0>;
+		cooling-levels = <0 50 100 150 200 255>;
+	};
+};
+
+&fan {
+	cooling-levels = <0 50 100 150 200 255>;
+	/delete-property/ rockchip,temp-trips;
+};
+
+/* was overlay uart3-m0: KNX TP-UART */
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3m0_xfer>;
+	status = "okay";
+};
+
+/* was overlay uart7-m2: Zigbee */
+&uart7 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart7m2_xfer>;
+	status = "okay";
+};
+
+/* was overlay i2c2-m1: OLED (0x3c) and DS1307 RTC (0x68) */
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2m1_xfer>;
+	status = "okay";
+};
+
+/* was overlay i2c4-m0 */
+&i2c4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c4m0_xfer>;
+	status = "okay";
+};
+
+/* was overlay pwm11-m1: second fan */
+&pwm11 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm11m1_pins>;
+	status = "okay";
+};
+
+&cpu_thermal {
+	trips {
+		fan_t55: fan-t55 {
+			temperature = <55000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+		fan_t63: fan-t63 {
+			temperature = <63000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+		fan_t73: fan-t73 {
+			temperature = <73000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+		fan_t77: fan-t77 {
+			temperature = <77000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan-map55 {
+			trip = <&fan_t55>;
+			cooling-device = <&fan 2 2>, <&fan2 2 2>;
+		};
+		fan-map63 {
+			trip = <&fan_t63>;
+			cooling-device = <&fan 3 3>, <&fan2 3 3>;
+		};
+		fan-map73 {
+			trip = <&fan_t73>;
+			cooling-device = <&fan 4 4>, <&fan2 4 4>;
+		};
+		fan-map77 {
+			trip = <&fan_t77>;
+			cooling-device = <&fan 5 5>, <&fan2 5 5>;
+		};
+	};
+};
+
+&pinctrl {
+	joyhome {
+		joyhome_buttons: joyhome-buttons {
+			rockchip,pins =
+				<3 RK_PD5 RK_FUNC_GPIO &pcfg_pull_none>,
+				<3 RK_PD2 RK_FUNC_GPIO &pcfg_pull_none>,
+				<3 RK_PD1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};

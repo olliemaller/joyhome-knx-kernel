@@ -1,0 +1,19 @@
+#!/bin/bash
+
+. /etc/orangepi-release
+
+echo "update-initramfs: Converting to u-boot format" >&2
+tempname="/boot/uInitrd-$1"
+mkimage -A $INITRD_ARCH -O linux -T ramdisk -C gzip -n uInitrd -d $2 $tempname > /dev/null
+
+# /boot/uInitrd is the 6.18 (Armbian) initrd. The 5.10 kernel boots
+# from /boot/k510/uInitrd, so a 5.10 rebuild only refreshes that copy.
+case "$1" in
+	5.10.*)
+		mkdir -p /boot/k510
+		mv -f $tempname /boot/k510/uInitrd
+		exit 0
+		;;
+esac
+ln -sf $(basename $tempname) /boot/uInitrd > /dev/null 2>&1 || mv $tempname /boot/uInitrd
+exit 0

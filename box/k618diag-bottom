@@ -1,0 +1,21 @@
+#!/bin/sh
+# /etc/initramfs-tools/scripts/init-bottom/k618diag
+# During a JoyHome kernel trial only: note that root was mounted.
+# With /boot/ktest.txt present this is a test boot: save the log and go straight back to 5.10.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+case "$(uname -r)" in 5.10.*) exit 0 ;; esac
+mkdir -p /run/k618diag
+if mount -t vfat /dev/mmcblk0p1 /run/k618diag 2>/dev/null; then
+	if [ -e /run/k618diag/ktrial.txt ] || [ -e /run/k618diag/ktest.txt ]; then
+		{ echo "== init-bottom: root mounted on ${rootmnt}"; dmesg; } > /run/k618diag/k618-bottom.log 2>&1
+	fi
+	if [ -e /run/k618diag/ktest.txt ]; then
+		echo x > /run/k618diag/kold.txt
+		sync; umount /run/k618diag
+		reboot -f
+	fi
+	sync; umount /run/k618diag
+fi
+exit 0

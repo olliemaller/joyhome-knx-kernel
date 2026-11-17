@@ -1,0 +1,38 @@
+#!/bin/bash
+# /usr/local/sbin/joyhome-kernel-update [--check] [--reboot]
+# Installs the latest kernel built by github.com/olliemaller/joyhome-knx-kernel.
+#   --check   only say whether a newer build exists
+#   --reboot  reboot into it straight away (trial boot, falls back to 5.10)
+set -euo pipefail
+REPO="olliemaller/joyhome-knx-kernel"
+API="https://api.github.com/repos/$REPO/releases/latest"
+check=0; reboot=0
+for a in "$@"; do case "$a" in --check) check=1 ;; --reboot) reboot=1 ;; *) echo "usage: $0 [--check] [--reboot]"; exit 2 ;; esac; done
+
+rel=$(curl -fsSL --max-time 30 "$API")
+tag=$(echo "$rel" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
+img_url=$(echo "$rel" | python3 -c 'import json,sys; print(next(a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].startswith("linux-image-")))')
+sums_url=$(echo "$rel" | python3 -c 'import json,sys; print(next(a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"]=="SHA256SUMS"))')
+img=$(basename "$img_url")
+newver=$(echo "$img" | sed -E 's/^linux-image-([^_]+)_.*/\1/')
+cur=$(cat /boot/joyhome/kernel-version 2>/dev/null || echo none)
+echo "Running: $(uname -r)   installed JoyHome kernel: $cur   latest build: $newver ($tag)"
+if [ "$newver" = "$cur" ]; then echo "Already up to date."; exit 0; fi
+[ $check = 1 ] && { echo "An update is available."; exit 10; }
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+curl -fsSL --max-time 300 -o "$tmp/$img" "$img_url"
+curl -fsSL --max-time 30 -o "$tmp/SHA256SUMS" "$sums_url"
+( cd "$tmp" && grep " $img\$" SHA256SUMS | sha256sum -c - )
+dpkg -i "$tmp/$img"
+
+# keep the new kernel and the one before it; remove older JoyHome kernels
+mapfile -t olds < <(dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*-joyhome' 2>/dev/null | awk '/installed$/{print $1}' | sed 's/^linux-image-//' | sort -V | head -n -2)
+for v in "${olds[@]}"; do
+	[ "$v" = "$(uname -r)" ] && continue
+	echo "Removing old kernel $v"; dpkg --purge "linux-image-$v" || true
+	rm -f "/boot/uInitrd-$v" "/boot/initrd.img-$v"
+done
+
+if [ $reboot = 1 ]; then echo "Rebooting into $newver (trial boot)..."; sync; systemctl reboot
+else echo "Installed $newver. Reboot when it suits: the first boot is a trial and falls back to 5.10 if anything is wrong."; fi
