@@ -19,6 +19,7 @@ JoyHome's carrier board has an **external hardware watchdog** on GPIO4_C3. It re
 | `config/joyhome.config` | The changes on top: watchdog built in, DS1307 RTC, 10 serial ports, no debug info. |
 | `config/trim-drivers.py` | Turns off driver modules this box can never use, to keep builds quick. |
 | `.github/workflows/build.yml` | Builds the latest 6.18.y on the 3rd of each month (or by hand) and publishes the `.deb` as a release. |
+| `patches/` | Fixes applied to the NPU driver so it runs on 6.18 (it's written against Linux 7.2). |
 | `box/` | Files installed on the box (see below). |
 
 ## On the box
@@ -85,7 +86,7 @@ Delete `/boot/kold.txt` and create `/boot/karmed.txt` to try the new kernel agai
 
 The RK3566 has a small NPU (the same as the RK3568's). Mainline Linux doesn't support it yet: the open "rocket" driver covers the RK3588, and RK3568 support is still in review. [iav/rk3568-npu](https://github.com/iav/rk3568-npu) has it working on an ODROID-M1 (RK3568) with a fork of the rocket driver and a Mesa Teflon branch: MobileNet v1 in about 5 ms instead of 117 ms on the CPU, YOLOv8n in about 15 ms.
 
-Each release includes `joyhome-npu-<kernel>.tar.gz` with that driver built for the release's kernel and Mesa's Teflon TensorFlow Lite delegate, from pinned revisions (see `NPU-PINS` inside).
+Each release includes `joyhome-npu-<kernel>.tar.gz` with that driver (plus `patches/rocket-*.patch` for 6.18) built for the release's kernel and Mesa's Teflon TensorFlow Lite delegate, from pinned revisions (see `NPU-PINS` inside).
 
 ```bash
 sudo joyhome-npu enable    # driver, Teflon, a Python TFLite runtime and a test model

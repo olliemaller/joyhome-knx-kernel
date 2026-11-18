@@ -16,7 +16,7 @@ on:
     - cron: "37 16 3 * *" # 16:37 UTC on the 3rd of each month
   push:
     branches: [main]
-    paths: ["config/**", "dts/**", ".github/workflows/build.yml"]
+    paths: ["config/**", "dts/**", "patches/**", ".github/workflows/build.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -138,6 +138,8 @@ jobs:
         run: |
           git init -q npu && cd npu
           git fetch -q --depth 1 "$NPU_REPO" "$NPU_REF" && git checkout -q FETCH_HEAD
+          # fixes for running the 7.2-based driver on 6.18
+          for p in ../patches/rocket-*.patch; do echo "applying $p"; patch -p1 < "$p"; done
           make -C ../linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- M="$PWD/module" modules
           modinfo -F vermagic module/rocket.ko
 

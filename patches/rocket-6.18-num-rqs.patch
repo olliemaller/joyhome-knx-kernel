@@ -1,0 +1,24 @@
+--- a/module/rocket_job.c
++++ b/module/rocket_job.c
+@@ -3,6 +3,7 @@
+ /* Copyright 2019 Collabora ltd. */
+ /* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
+ 
++#include <linux/version.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_file.h>
+ #include <drm/drm_gem.h>
+@@ -746,7 +747,12 @@
+ {
+ 	struct drm_sched_init_args args = {
+ 		.ops = &rocket_sched_ops,
+-		/* .num_rqs dropped from drm_sched_init_args in 7.2 */
++		/* .num_rqs dropped from drm_sched_init_args in 7.2, but required
++		 * before that: with 0 run-queues every drm_sched_entity_init()
++		 * fails and the NPU can't be opened (joyhome-knx-kernel). */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
++		.num_rqs = DRM_SCHED_PRIORITY_COUNT,
++#endif
+ 		.credit_limit = 1,
+ 		.timeout = msecs_to_jiffies(JOB_TIMEOUT_MS),
+ 		.name = dev_name(core->dev),
