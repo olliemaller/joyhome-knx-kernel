@@ -2,7 +2,7 @@
 
 Linux 6.18 LTS for the **JoyHome "KNX HOME SERVER"**: an Orange Pi CM4 v1.4 (Rockchip RK3566) on JoyHome's carrier board, running Debian with Home Assistant Supervised, knxd and a TP-UART KNX interface.
 
-The box shipped with Orange Pi's 5.10.160 kernel (a 2022 base that no longer gets fixes). Orange Pi has nothing newer for this board, and ready-made kernels such as Armbian's can't boot it. This repo builds a current long-term kernel that can, and rebuilds it every month as new 6.18 fixes come out.
+The box shipped with Orange Pi's 5.10.160 kernel (a 2022 base that no longer gets fixes). Orange Pi has nothing newer for this board, and ready-made kernels such as Armbian's can't boot it. This repo builds a current long-term kernel that can, and rebuilds it within a week of each new 6.18 stable release.
 
 ## Why a ready-made kernel won't boot
 
@@ -18,7 +18,7 @@ JoyHome's carrier board has an **external hardware watchdog** on GPIO4_C3. It re
 | `config/base-armbian-rockchip64-6.18.config` | Armbian's rockchip64 6.18 kernel config, the starting point. |
 | `config/joyhome.config` | The changes on top: watchdog built in, DS1307 RTC, 10 serial ports, no debug info. |
 | `config/trim-drivers.py` | Turns off driver modules this box can never use, to keep builds quick. |
-| `.github/workflows/build.yml` | Builds the latest 6.18.y on the 3rd of each month (or by hand) and publishes the `.deb` as a release. |
+| `.github/workflows/build.yml` | Checks every Monday and builds the latest 6.18.y when there's a new one (or by hand), then publishes the `.deb` as a release with a link to the upstream changelog. |
 | `patches/` | Fixes applied to the NPU driver so it runs on 6.18 (it's written against Linux 7.2). |
 | `box/` | Files installed on the box (see below). |
 

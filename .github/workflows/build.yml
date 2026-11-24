@@ -1,9 +1,9 @@
 name: Build kernel
 
 # Builds the latest Linux 6.18 LTS release for the JoyHome KNX Home Server and
-# publishes the Debian package as a GitHub release. Runs on the 3rd of each
-# month, on changes to the config or device tree, or by hand (optionally with a
-# specific version, e.g. 6.18.64).
+# publishes the Debian package as a GitHub release. Checks every Monday and
+# builds only when a new 6.18.y has come out, on changes to the config or
+# device tree, or by hand (optionally with a specific version, e.g. 6.18.64).
 #
 # Each release also carries joyhome-npu-<kernel>.tar.gz for the EXPERIMENTAL
 # NPU support (box/joyhome-npu): the "rocket" driver with RK3568 support built
@@ -13,7 +13,7 @@ name: Build kernel
 
 on:
   schedule:
-    - cron: "37 16 3 * *" # 16:37 UTC on the 3rd of each month
+    - cron: "37 16 * * 1" # 16:37 UTC every Monday (Tue 02:37-03:37 Melbourne); skips if already built
   push:
     branches: [main]
     paths: ["config/**", "dts/**", "patches/**", ".github/workflows/build.yml"]
@@ -53,7 +53,7 @@ jobs:
       pkgver: ${{ steps.ver.outputs.pkgver }}
       skip: ${{ steps.ver.outputs.skip }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Pick the version
         id: ver
         env:
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install the build tools
         run: |
@@ -163,7 +163,7 @@ jobs:
           echo "$kver" > npu-out/kernel-version
           ls -la out npu-out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kernel
           path: |
@@ -201,7 +201,7 @@ jobs:
           cp build/src/gallium/targets/teflon/libteflon.so ../teflon-out/
           file ../teflon-out/libteflon.so
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: teflon
           path: teflon-out/
@@ -210,7 +210,7 @@ jobs:
     needs: [version, kernel, teflon]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: art
 
@@ -232,10 +232,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           tag="${{ needs.version.outputs.tag }}"
-          notes="Linux ${{ needs.version.outputs.version }} for the JoyHome KNX Home Server (Orange Pi CM4 v1.4).
+          v="${{ needs.version.outputs.version }}"
+          notes="Linux ${v} for the JoyHome KNX Home Server (Orange Pi CM4 v1.4).
+          Upstream changes: https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-${v}
           Install on the box with: sudo joyhome-kernel-update
           The first boot is a trial; the box falls back to 5.10 by itself if it isn't healthy.
 
           joyhome-npu-*.tar.gz is the EXPERIMENTAL NPU support (sudo joyhome-npu enable)."
           gh release delete "$tag" --yes --cleanup-tag >/dev/null 2>&1 || true
-          gh release create "$tag" out/* --target "${{ github.sha }}" --title "Linux ${{ needs.version.outputs.version }}" --notes "$notes"
+          gh release create "$tag" out/* --target "${{ github.sha }}" --title "Linux ${v}" --notes "$notes"
