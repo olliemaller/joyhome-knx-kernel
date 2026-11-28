@@ -1,6 +1,21 @@
-# joyhome-knx-kernel
+<p align="center">
+  <img src="https://raw.githubusercontent.com/olliemaller/joyhome-knx-kernel/main/images/banner.png" alt="JoyHome KNX Kernel" width="100%">
+</p>
 
-Linux 6.18 LTS for the **JoyHome "KNX HOME SERVER"**: an Orange Pi CM4 v1.4 (Rockchip RK3566) on JoyHome's carrier board, running Debian with Home Assistant Supervised, knxd and a TP-UART KNX interface.
+<p align="center">
+  <a href="https://github.com/olliemaller/joyhome-knx-kernel/releases"><img src="https://img.shields.io/github/v/release/olliemaller/joyhome-knx-kernel?style=for-the-badge&color=FFFFFF&labelColor=000000" alt="Release"></a>
+  <a href="https://github.com/olliemaller/joyhome-knx-kernel/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/olliemaller/joyhome-knx-kernel/build.yml?branch=main&style=for-the-badge&label=build&labelColor=000000" alt="Build"></a>
+  <img src="https://img.shields.io/badge/Linux-6.18%20LTS-FFFFFF?style=for-the-badge&logo=linux&logoColor=white&labelColor=000000" alt="Linux 6.18 LTS">
+  <a href="https://maller.com.au/projects/joyhome-knx-kernel/"><img src="https://img.shields.io/badge/Read-the%20write--up-FFFFFF?style=for-the-badge&labelColor=000000" alt="Read the write-up"></a>
+  <a href="https://maller.com.au/"><img src="https://img.shields.io/badge/Site-maller.com.au-FFFFFF?style=for-the-badge&labelColor=000000" alt="maller.com.au"></a>
+</p>
+
+<p align="center">
+  <b>Linux 6.18 LTS for the JoyHome "KNX HOME SERVER".</b><br>
+  An Orange Pi CM4 v1.4 (Rockchip RK3566) on JoyHome's carrier board, running Debian with Home Assistant Supervised, knxd and a TP-UART KNX interface.
+</p>
+
+---
 
 The box shipped with Orange Pi's 5.10.160 kernel (a 2022 base that no longer gets fixes). Orange Pi has nothing newer for this board, and ready-made kernels such as Armbian's can't boot it. This repo builds a current long-term kernel that can, and rebuilds it within a week of each new 6.18 stable release.
 
